@@ -1,19 +1,18 @@
 [package]
 name = "otlp-test"
-version = "0.1.2"
+version = "0.2.7"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-futures-util = "0.3.25"
 hyper = "0.14.23"
 once_cell = "1.16.0"
-opentelemetry = { version = "0.17.0", features = ["rt-tokio", "metrics"] }
-opentelemetry-otlp = { version = "0.10.0", features = ["tls", "tls-roots", "trace", "tonic", "metrics"] }
+opentelemetry = { version = "0.18.0", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp = { version = "0.11.0", features = ["tls", "tls-roots", "trace", "tonic", "metrics"] }
 rand = "0.8.5"
-tonic = "0.6.2"
-tokio = "1.21.2"
+tonic = "0.8.2"
+tokio = { version = "1.21.2", features = ["rt-multi-thread"] }
 tracing = "0.1.37"
-tracing-opentelemetry = "0.17.2"
+tracing-opentelemetry = "0.18.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
