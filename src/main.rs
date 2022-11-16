@@ -157,8 +157,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         url: String::from("http://127.0.0.1:4317/"),
         attributes: None,
         service: ServiceConfig {
-            aggregator_selector: Some(AggregatorSelector::Exact),
-            export_kind: Some(ExportKind::Delta),
+            //aggregator_selector: Some(AggregatorSelector::Exact),
+            //export_kind: Some(ExportKind::Delta),
             ..Default::default()
         }
     };
@@ -174,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let server = Server::bind(&addr).serve(make_svc);
 
-    println!("Listening on http://{}", addr);
+    println!("Version {} listening on http://{addr}", env!("CARGO_PKG_VERSION"));
 
     server.await?;
 
