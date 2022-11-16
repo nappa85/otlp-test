@@ -1,11 +1,18 @@
-use std::{collections::HashMap, time::Duration, convert::Infallible};
+use std::{collections::HashMap, convert::Infallible, time::Duration, env};
 
 use futures_util::{Stream, StreamExt};
 
-use hyper::{service::{make_service_fn, service_fn}, Server, Response, Body, Request};
-use once_cell::sync::{OnceCell, Lazy};
+use hyper::{
+    service::{make_service_fn, service_fn},
+    Body, Request, Response, Server,
+};
+use once_cell::sync::{Lazy, OnceCell};
 
-use opentelemetry::{sdk, metrics::{self, Counter, ValueRecorder, Unit}, global, KeyValue};
+use opentelemetry::{
+    global,
+    metrics::{self, Counter, Unit, ValueRecorder},
+    sdk, KeyValue,
+};
 
 use opentelemetry_otlp::WithExportConfig;
 use rand::Rng;
@@ -34,9 +41,30 @@ pub struct ServiceConfig {
 #[derive(Debug)]
 pub enum AggregatorSelector {
     Exact,
-    Histogram { buckets: Vec<f64> },
+    Histogram {
+        buckets: Vec<f64>,
+    },
     Inexpensive,
-    Sketch { alpha: f64, max_num_bins: i64, key_epsilon: f64 },
+    Sketch {
+        alpha: f64,
+        max_num_bins: i64,
+        key_epsilon: f64,
+    },
+}
+
+impl AggregatorSelector {
+    fn from_env() -> Option<Self> {
+        match env::var("AGGREGATOR_SELECTOR").as_deref() {
+            Ok("EXACT") => Some(AggregatorSelector::Exact),
+            Ok("HISTOGRAM") => Some(AggregatorSelector::Histogram { buckets: Vec::new() }),
+            Ok("INEXPENSIVE") => Some(AggregatorSelector::Inexpensive),
+            Ok("SKETCH") => Some(AggregatorSelector::Sketch { alpha: 0.0, max_num_bins: 0, key_epsilon: 0.0 }),
+            x => {
+                eprintln!("AGGREGATOR_SELECTOR {x:?}");
+                None
+            },
+        }
+    }
 }
 
 impl Default for &AggregatorSelector {
@@ -52,14 +80,16 @@ impl From<&AggregatorSelector> for sdk::metrics::selectors::simple::Selector {
             AggregatorSelector::Histogram { buckets } => {
                 sdk::metrics::selectors::simple::Selector::Histogram(buckets.clone())
             }
-            AggregatorSelector::Inexpensive => sdk::metrics::selectors::simple::Selector::Inexpensive,
-            AggregatorSelector::Sketch { alpha, max_num_bins, key_epsilon } => {
-                sdk::metrics::selectors::simple::Selector::Sketch(sdk::metrics::aggregators::DdSketchConfig::new(
-                    *alpha,
-                    *max_num_bins,
-                    *key_epsilon,
-                ))
+            AggregatorSelector::Inexpensive => {
+                sdk::metrics::selectors::simple::Selector::Inexpensive
             }
+            AggregatorSelector::Sketch {
+                alpha,
+                max_num_bins,
+                key_epsilon,
+            } => sdk::metrics::selectors::simple::Selector::Sketch(
+                sdk::metrics::aggregators::DdSketchConfig::new(*alpha, *max_num_bins, *key_epsilon),
+            ),
         }
     }
 }
@@ -69,6 +99,20 @@ pub enum ExportKind {
     Cumulative,
     Delta,
     Stateless,
+}
+
+impl ExportKind {
+    fn from_env() -> Option<Self> {
+        match env::var("EXPORT_KIND").as_deref() {
+            Ok("CUMULATIVE") => Some(ExportKind::Cumulative),
+            Ok("DELTA") => Some(ExportKind::Delta),
+            Ok("STATELESS") => Some(ExportKind::Stateless),
+            x => {
+                eprintln!("EXPORT_KIND {x:?}");
+                None
+            },
+        }
+    }
 }
 
 impl Default for &ExportKind {
@@ -88,10 +132,14 @@ impl From<&ExportKind> for sdk::export::metrics::ExportKindSelector {
 }
 
 fn get_metadata(attributes: Option<&HashMap<String, String>>) -> tonic::metadata::MetadataMap {
-    let mut map = tonic::metadata::MetadataMap::with_capacity(attributes.map(|hm| hm.len()).unwrap_or_default());
+    let mut map = tonic::metadata::MetadataMap::with_capacity(
+        attributes.map(|hm| hm.len()).unwrap_or_default(),
+    );
     if let Some(a) = attributes {
         for (key, value) in a {
-            map.entry(key).unwrap().or_insert_with(|| value.parse().unwrap());
+            map.entry(key)
+                .unwrap()
+                .or_insert_with(|| value.parse().unwrap());
         }
     }
     map
@@ -110,7 +158,11 @@ fn delayed_interval(duration: Duration) -> impl Stream<Item = tokio::time::Insta
     opentelemetry::util::tokio_interval_stream(duration).skip(1)
 }
 
-fn start_metric_otlp(url: &str, attributes: Option<&HashMap<String, String>>, service: &ServiceConfig) {
+fn start_metric_otlp(
+    url: &str,
+    attributes: Option<&HashMap<String, String>>,
+    service: &ServiceConfig,
+) {
     let push_controller = opentelemetry_otlp::new_pipeline()
         .metrics(tokio::spawn, delayed_interval)
         .with_exporter(
@@ -157,24 +209,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         url: String::from("http://127.0.0.1:4317/"),
         attributes: None,
         service: ServiceConfig {
-            //aggregator_selector: Some(AggregatorSelector::Exact),
-            //export_kind: Some(ExportKind::Delta),
+            aggregator_selector: AggregatorSelector::from_env(),
+            export_kind: ExportKind::from_env(),
             ..Default::default()
-        }
+        },
     };
     start_metric_otlp(&config.url, config.attributes.as_ref(), &config.service);
 
     // from now on, a simple hyper example
 
-    let make_svc = make_service_fn(|_conn| {
-        async { Ok::<_, Infallible>(service_fn(hello)) }
-    });
+    let make_svc = make_service_fn(|_conn| async { Ok::<_, Infallible>(service_fn(hello)) });
 
     let addr = ([127, 0, 0, 1], 3000).into();
 
     let server = Server::bind(&addr).serve(make_svc);
 
-    println!("Version {} listening on http://{addr}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Version {} listening on http://{addr}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     server.await?;
 
